@@ -1,0 +1,123 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+#load libraries
+library(tidytext)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggraph)
+library(igraph)
+```
+
+Load our data
+```{r}
+#get data
+options(stringsAsFactors = FALSE)
+
+twts <- read.delim("C:\\Users\\user\\Downloads\\tweet.txt", header=FALSE, stringsAsFactors = FALSE, sep='|')
+
+sotu <- read.delim("C:\\Users\\user\\Downloads\\part-m-00000.txt", header=FALSE, stringsAsFactors = FALSE, sep='|')
+```
+
+Sentiment Analysis is a technique we can use to try to calculate the emotion or tone of a text.
+The method I will demonstrate here uses a library called tidytext. There are three different lexicons available to you in this library.
+AFINN, bing, NRC
+AFINN categorizes words into positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust.
+Bing categorizes words into positive and negative.
+AFINN assigns scores between -5 and 5.
+The easiest way to understand how this works using BING as an example is that each word in a sentence is assigned either -1 or +1 and then the sentence is totalled. If the result is negative, then the sentence has a negative emotion, while if the result is positive, then overall the sentence is positive. A zero would mean a neutral sentence.
+You can look at any of the lexicons as below (replace bing with afinn or nrc)
+```{r}
+get_sentiments("nrc")
+```
+
+Let's get a single chunk of text from our data to work with. 
+We'll grab a single ContactMethod from our data. Then we split it up into individual words with a function called "unnest_tokens" (don't worry about what it is, just that it will break the sentence into individual words)
+
+```{r}
+
+sotu_rows <- sotu %>% mutate (h_number = row_number())
+sotu_Tidy <- sotu_rows %>% unnest_tokens(word, V1)
+#unnest_tokens also changes everything to lower-case.
+
+```
+Let's take a look at the word list we now have:
+```{r}
+sotu_Tidy %>% count(word, sort = TRUE)
+```
+Notice that many of the words are what we would call "stop words", that is, at least for us, they don't have any sentiment. Words like "if, an, the" so let's remove them, then we'll look at the list again:
+```{r}
+sotu_Tidy <- sotu_Tidy %>% anti_join(stop_words)
+sotu_Tidy %>% count(word, sort = TRUE)
+```
+
+Great! Now, let's look at the sentiment of our word list. First we'll start with a very simple use of the lexicons. You will be able to see how it views each word. Try changing afinn to bing or nrc
+```{r}
+sotu_Tidy %>% inner_join(get_sentiments("nrc"))
+```
+
+Let's look at word clouds too since we're at it. We'll put all of a single column into a new data.frame. This command also removes all rows where Improvement is empty.
+```{r code, echo=FALSE, message=FALSE, warning=FALSE}
+library(wordcloud)
+sotuWordCount <- sotu_Tidy %>% count(word, sort=TRUE) %>% top_n(15) %>% mutate(word = reorder(word,n)) 
+ggplot(data=sotuWordCount, aes(x=word, y=n)) +
+    geom_bar(stat="identity") + coord_flip() + labs(x="Word",y="word Count",title="Word Frequency")
+```
+
+OK, there's our bar, let's make a word cloud:
+```{r code2, echo=FALSE, message=FALSE, warning=FALSE}
+sotu_wc <- sotu_Tidy %>% count(word, sort=TRUE)  %>% top_n(200)
+wordcloud(sotu_wc$word, sotu_wc$n, random.order=FALSE, colors=brewer.pal(8,"Dark2"))
+```
+
+We did this based on individual words, now we can start using N-Grams. This means sequences of words, we can do bi-grams (2 words), tri-grams (3 words, etc.) If you think about Harry Potter and how it starts "The boy who lived" if we split this to bi-grams we get:
+the boy
+boy who
+who lived
+Let's get started. 
+```{r code, echo=FALSE, message=FALSE, warning=FALSE}
+sotuBigram <- sotu_Tidy %>% unnest_tokens(bigram, word, token = "ngrams", n = 2)
+```
+
+Let's look at which bi-gram shows up most often (top 20)
+```{r code3, echo=FALSE, message=FALSE, warning=FALSE}
+sotuBigram %>% count(bigram,sort=TRUE) %>% top_n(20)
+```
+
+Let's get rid of the common words since they don't provide context
+```{r code4, echo=FALSE, message=FALSE, warning=FALSE}
+sotuBigramCount <- sotuBigram %>% separate(bigram, c("word1", "word2"), sep = " ") %>%
+        filter(!word1 %in% stop_words$word,
+               !word2 %in% stop_words$word) %>%
+        count(word1, word2, sort = TRUE)
+```
+Plot it:
+```{r code5, echo=FALSE, message=FALSE, warning=FALSE}
+
+sotuBigramCount %>%  filter(n>=2000) %>%
+  graph_from_data_frame() %>% ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n)) +
+  geom_node_point(color = "darkslategray4", size = 3) +
+  geom_node_text(aes(label = name), vjust = 1.8, size = 3) +
+  labs(title = "Word Network: CE SQM",
+       subtitle = "Text mining ",
+       x = "", y = "") +
+  theme_void()
+```
+
+Let's try to remove the garbage words:
+We'll make a custom list of "stop words" to remove and then use an anti-join to remove them.
+```{r}
+custom_stop_list <- tibble(word = c("rt","realdonaldtrump","http","https","tco","amp","sotu","??","?","???","i?","?","potus"))
+sotu_clean <- sotu_Tidy %>% anti_join(custom_stop_list)
+```
+```{r}
+sotuWordCount <- sotu_clean %>% count(word, sort=TRUE) %>% top_n(15) %>% mutate(word = reorder(word,n)) 
+ggplot(data=sotuWordCount, aes(x=word, y=n)) +
+    geom_bar(stat="identity") + coord_flip() + labs(x="Word",y="word Count",title="Word Frequency")
+```
+
